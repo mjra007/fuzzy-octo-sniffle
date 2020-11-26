@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+
+<html>
+
+    <head>
+        <title>City</title>
+        <script type="text/javascript" src="./libs/keypress.js"></script>
+        <script type="text/javascript" src="./libs/three.js"></script>
+        <script type="text/javascript" src="./libs/jquery.js"></script>
+        <script type="text/javascript" src="./libs/stats.js"></script>
+        <script type="text/javascript" src="./libs/dat.gui.js"></script>
+        <script type="text/javascript" src="./libs/chroma.js"></script>
+        <style>
+            body{
+                /* set margin to 0 and overflow to hidden, to go fullscreen */
+                margin: 0;
+                overflow: hidden;
+            }
+        </style>
+    </head>
+    <body>
+
+        <div id="Stats-output">
+        </div>
+        <!-- Div which will hold the Output -->
+        <div id="WebGL-output">
+        </div>
+
+
+        <script type="text/javascript">
+
+            // once everything is loaded, run Three.js stuff.
+            $(function () {
+
+                alert("\
+                       W - moves you forwards \n\
+                       S - moves you backwards\n\
+                       A - moves you leftwards \n\
+                       D - moves you rightwards\n\
+                       \n\
+                       Rotation happen in relation to the center of the City     \n\
+                       \n\
+                       UP/DOWN - rotates around x axis\n\
+                       LEFT/RIGHT - rotates around y axis \n\
+                        \n\
+                        \n\
+                        Click CREATE CITY to build the city");
+
+                var stats = initStats();
+
+                // create a scene, that will hold all our elements such as objects, cameras and lights.
+                var scene = new THREE.Scene();
+                scene.fog = new THREE.Fog(0x28F9D0, 400, 480);
+
+                // create a camera, which defines where we're looking at.
+                var camera = new THREE.PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+                // create a render and set the size
+                var renderer = new THREE.WebGLRenderer();
+
+                renderer.setClearColor(0x28F9D0, 1.0);
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.shadowMap.enabled = true;
+                // First
+                document.body.appendChild(renderer.domElement);
+
+                //initialising camera pivot and adding it to the scene
+                var cameraPivot = new THREE.Group();
+                cameraPivot.position.set(0.0, 0, 0);
+                cameraPivot.add(camera);
+                scene.add(cameraPivot);
+
+                //initialising sun pivot
+                var sunPivot = new THREE.Group();
+                var sun;
+                // add the output of the renderer to the html element
+                $("#WebGL-output").append(renderer.domElement);
+                var buildings = [];
+
+                var controls = new function () {
+                    this.noOfRows = 3;
+                    this.noOfCollumns = 3;
+                    this.sizeOfStreets = 10;
+                    this.sizeOfSquares = 60;
+                    this.allowMovingTowers = true;
+                    this.backgroundColour = 0x28F9D0;
+                    this.positionSpeed = 2;
+                    this.rotationSpeed = 1.5;
+                    this.recreateCity = function () {
+                        
+                        //deletes all previous objects in scene
+                        while (scene.children.length > 0) {
+                            scene.remove(scene.children[0]);
+                        }
+                        
+                        sunPivot = new THREE.Group();
+                        sunPivot.position.set(0.0, 0.0, 0);
+                        
+                        //calculating centre of the city
+                        var centerX = this.noOfRows * (this.sizeOfStreets + this.sizeOfSquares) - (this.sizeOfStreets + this.sizeOfSquares) / 2;
+                        var centerZ = this.noOfCollumns * (this.sizeOfStreets + this.sizeOfSquares) - (this.sizeOfStreets + this.sizeOfSquares) / 2;
+
+                        //creates and adds teh sun
+                        sun = createSun(centerX, centerZ);
+                        sunPivot.add(sun);
+                        scene.add(sunPivot);
+                        
+                        //creating city
+                        var city = createCity(this.noOfRows, this.noOfCollumns, this.sizeOfStreets, this.sizeOfSquares);
+                        buildings = city.buildings;
+                        
+                        //positioning the camera pivot at the centre of the city
+                        cameraPivot = new THREE.Group();
+                        cameraPivot.position.set(centerX / 2, 25, centerZ / 2);
+                        cameraPivot.add(camera);
+                        
+                        //adds camera group to the scene and positions the camera away from the scene
+                        scene.add(cameraPivot);
+                        camera.position.z = centerX;
+                        camera.position.y = 25;
+
+                        scene.add(city.city);
+                    };
+                    this.ToggleSun = function () {
+                        if (sunPivot.visible) {
+                            sunPivot.visible = false;
+                            renderer.setClearColor(controls.backgroundColour, .2);
+                        } else {
+                            sunPivot.visible = true;
+                            renderer.setClearColor(controls.backgroundColour, 1.0);
+                        }
+
+                    };
+                   
+                };
+
+                //Creates gui
+                var gui = new dat.GUI({width: 300});
+                var citySettings = gui.addFolder("City Settings");
+                citySettings.add(controls, 'noOfRows', 0, 10).step(1).name("No of rows");
+                citySettings.add(controls, 'noOfCollumns', 0, 10).step(1).name("No of Collumns");
+                citySettings.add(controls, 'sizeOfStreets', 0, 50).step(1).name("Size of streets");
+                citySettings.add(controls, 'sizeOfSquares', 0, 100).step(1).name("Size of Squares");
+                citySettings.add(controls, 'allowMovingTowers', false).name("Animate buildings");
+                citySettings.add(controls, 'recreateCity').name("Create City");
+                citySettings.addColor(controls, 'backgroundColour')
+                        .onChange(function () {
+                            changeBackgroundColour(controls.backgroundColour);
+                        }).name("Change Background Colour");
+                citySettings.open();
+                gui.add(controls, 'ToggleSun').name("Disable/Enable Sun");
+                var firstPersonCommands = gui.addFolder("First Person Options");
+                firstPersonCommands.add(controls, "positionSpeed", 0, 5).step(0.5).name("Position Speed");
+                firstPersonCommands.add(controls, "rotationSpeed", 0, 5).step(0.5).name("Rotation Speed");
+                firstPersonCommands.open();
+                
+                var clock = new THREE.Clock();
+
+                render();
+
+                function render() {
+                    stats.update();
+                    
+                    //rotate sun around z axis
+                    sunPivot.rotation.z += 0.07 * clock.getDelta();
+
+                    //run render method to animate buildings
+                    if (controls.allowMovingTowers) {
+                        for (var i = 0; i < buildings.length; i++) {
+                            buildings[i].render();
+                        }
+                    }
+                    requestAnimationFrame(render);
+                    renderer.render(scene, camera);
+                }
+
+
+                //Key listeners
+                var listener = new window.keypress.Listener();
+
+                listener.simple_combo("w", function () {
+                    camera.position.z -= 0.7 * controls.positionSpeed;
+                });
+
+                listener.simple_combo("s", function () {
+                    camera.position.z += 0.7 * controls.positionSpeed;
+                });
+
+                listener.simple_combo("a", function () {
+                    camera.position.x -= 0.7 * controls.positionSpeed;
+                });
+
+                listener.simple_combo("d", function () {
+                    camera.position.x += 0.7 * controls.positionSpeed;
+                });
+
+                listener.simple_combo("up", function () {
+                    cameraPivot.rotation.x += 0.02 * controls.rotationSpeed;
+                });
+
+                listener.simple_combo("down", function () {
+                    cameraPivot.rotation.x -= 0.02 * controls.rotationSpeed;
+                });
+
+                listener.simple_combo("right", function () {
+                    cameraPivot.rotation.y += 0.02 * controls.rotationSpeed;
+                });
+
+                listener.simple_combo("left", function () {
+                    cameraPivot.rotation.y -= 0.02 * controls.rotationSpeed;
+
+                });
+
+                listener.simple_combo("space", function () {
+                    cameraPivot.position.y += 0.7 * controls.positionSpeed;
+                });
+                listener.simple_combo("space shift", function () {
+                    cameraPivot.position.y -= 0.7 * controls.positionSpeed;
+                });
+
+                function initStats() {
+
+                    var stats = new Stats();
+
+                    stats.setMode(0); // 0: fps, 1: ms
+
+                    // Align top-left
+                    stats.domElement.style.position = 'absolute';
+                    stats.domElement.style.left = '0px';
+                    stats.domElement.style.top = '0px';
+
+                    $("#Stats-output").append(stats.domElement);
+
+                    return stats;
+                }
+
+                function changeBackgroundColour(color = 0x28F9D0) {
+                    scene.fog = new THREE.Fog(color, 400, 480);
+                    renderer.setClearColor(color, 1.0);
+                }
+
+                function createSun(x, z) {
+                    var group = new THREE.Object3D();
+                    var spotLight = new THREE.SpotLight(0xffffff);
+                    spotLight.position.set(x / 2, 500, z / 2);
+                    spotLight.castShadow = true;
+                    group.add(spotLight);
+                    var sunGeometry = new THREE.SphereGeometry(10, 10, 10);
+                    var sunMaterial = new THREE.MeshBasicMaterial({color: 0xF3FF33});
+                    var sun = new THREE.Mesh(sunGeometry, sunMaterial);
+                    sun.position.y = 300;
+                    sun.position.x = x / 2;
+                    sun.position.z = z / 2;
+                    group.add(sun);
+                    return group;
+                }
+
+                function createAmbientLight() {
+                    var ambientLight = new THREE.AmbientLight(0x0c0c0c);
+                    scene.add(ambientLight);
+                }
+
+                function createCity(rows = 3, collumns = 3, spaceBetweenSquares = 20, sizeOfSquares = 50) {
+                    createAmbientLight();
+                    var cityGroup = new THREE.Object3D();
+                    var cityBuildings = [];
+
+                    //Looping through rows and collumns
+                    for (var rowIndex = 0; rowIndex < rows; rowIndex++) {
+                        var offsetX = rowIndex * (spaceBetweenSquares + sizeOfSquares);
+
+                        for (var collumnIndex = 0; collumnIndex < collumns; collumnIndex++) {
+                            var offsetZ = collumnIndex * (spaceBetweenSquares + sizeOfSquares);
+
+                            //creating square of buildings
+                            var square = createSquareOfBuildings(sizeOfSquares, offsetX, offsetZ);
+
+                            square.buildings.forEach(function (b) {
+                                cityBuildings.push(b);
+                            });
+                            cityGroup.add(square.squareGroup);
+
+                            //creating side lights
+                            var lightBulb = createLightBulb();
+                            lightBulb.group.position.x = offsetX - (sizeOfSquares / 2);
+                            lightBulb.group.position.z = offsetZ - (sizeOfSquares / 2);
+                            lightBulb.group.position.y += lightBulb.height / 2;
+                            cityGroup.add(lightBulb.group);
+                            //creating road for row
+                            var sizeOfRoad = (sizeOfSquares + spaceBetweenSquares) * rows - spaceBetweenSquares;
+                            var road = createRoad(spaceBetweenSquares, sizeOfRoad);
+                            road.position.x = sizeOfRoad / 2 - sizeOfSquares / 2;
+                            road.position.z = sizeOfSquares / 2 + spaceBetweenSquares / 2 + offsetZ;
+                            road.rotation.y = Math.PI * 0.5;
+                            road.position.y = 0.006;
+
+                            cityGroup.add(road);
+                        }
+
+                        //creating road for collumn
+                        var sizeOfRoad = (sizeOfSquares + spaceBetweenSquares) * collumns - spaceBetweenSquares;
+                        var road = createRoad(spaceBetweenSquares, sizeOfRoad);
+                        road.position.x = sizeOfSquares / 2 + spaceBetweenSquares / 2 + offsetX;
+                        road.position.z = sizeOfRoad / 2 - sizeOfSquares / 2;
+                        road.position.y = 0.05;
+                        cityGroup.add(road);
+                    }
+                    //creating two extra roads for the two ends of the city that are not covered by the loop
+                    var sizeOfRoad = (sizeOfSquares + spaceBetweenSquares) * collumns - spaceBetweenSquares;
+                    var road = createRoad(spaceBetweenSquares, sizeOfRoad);
+                    road.position.x = -(sizeOfSquares / 2 + spaceBetweenSquares / 2);
+                    road.position.z = sizeOfRoad / 2 - sizeOfSquares / 2;
+                    road.position.y = 0.05;
+                    cityGroup.add(road);
+
+                    //second road roated 90 degrees
+                    var sizeOfRoad = (sizeOfSquares + spaceBetweenSquares) * rows - spaceBetweenSquares;
+                    var road = createRoad(spaceBetweenSquares, sizeOfRoad);
+                    road.position.x = sizeOfRoad / 2 - sizeOfSquares / 2;
+                    road.position.z = -(sizeOfSquares / 2 + spaceBetweenSquares / 2);
+                    road.rotation.y = Math.PI * 0.5;
+                    road.position.y = 0.006;
+                    cityGroup.add(road);
+
+                    return {
+                        city: cityGroup,
+                        buildings: cityBuildings
+                    };
+                }
+
+                function createGround(width, height, offsetx, offsetz) {
+                    // create the ground plane
+                    var planeGeometry = new THREE.PlaneGeometry(width, height);
+                    var planeMaterial = new THREE.MeshLambertMaterial({color: 0x2E8B57});
+                    var plane = new THREE.Mesh(planeGeometry, planeMaterial);
+                    plane.receiveShadow = true;
+
+                    // rotate and position the plane
+                    plane.rotation.x = -0.5 * Math.PI;
+                    plane.position.x = offsetx;
+                    plane.position.z = offsetz;
+                    return plane;
+                }
+
+                function createSquareOfBuildings(sizeOfSquare, offsetx, offsetz) {
+                    var square = new THREE.Object3D();
+                    //creates the plane where the buildings sit;
+                    var plane = createGround(sizeOfSquare, sizeOfSquare, offsetx, offsetz);
+                    var buildingMaxX = 20; //max size of a building within the square in x axis
+                    var buildingMaxZ = 20;//max size of a building within the square in z axis
+                    var noOfRows = Math.floor(sizeOfSquare / buildingMaxX); //no of rows inside the square
+                    var remainder = sizeOfSquare % buildingMaxX;
+                    var noOfCollumns = Math.floor(sizeOfSquare / buildingMaxZ);// no of collumns in side the square
+                    var squareBuildings = [];
+
+                    //Loops through rows and collumsn and spawns the random building
+                    for (var rowIndex = 0; rowIndex < noOfRows; rowIndex++) {
+                        for (var collumnIndex = 0; collumnIndex < noOfCollumns; collumnIndex++) {
+                            var xWorldPos = remainder / 2 + rowIndex * buildingMaxX + (buildingMaxX / 2) - sizeOfSquare / 2;
+                            var zWorldPos = remainder / 2 + collumnIndex * buildingMaxZ + (buildingMaxZ / 2) - sizeOfSquare / 2;
+
+                            var randomBuilding = getRandomBuilding();
+
+                            randomBuilding.group.position.x = xWorldPos + offsetx;
+                            randomBuilding.group.position.z = zWorldPos + offsetz;
+
+                            squareBuildings.push(randomBuilding);
+
+                        }
+                    }
+                    squareBuildings.forEach(function (s) {
+                        square.add(s.group);
+                    });
+                    square.add(plane);
+                    return {
+                        buildings: squareBuildings,
+                        squareGroup: square
+                    };
+                }
+
+                function createRoad(width, height) {
+                    var roadGroup = new THREE.Object3D();
+                    var roadGeometry = new THREE.CubeGeometry(width, 0.1, height);
+                    var roadMaterial = new THREE.MeshLambertMaterial({color: 0XDDDDDD});
+                    var road = new THREE.Mesh(roadGeometry, roadMaterial);
+                    roadGroup.add(road);
+
+                    //creating white stripes for the road
+                    var sizeOfWhiteLines = 3;
+                    var noOfWhiteLines = Math.floor(height / sizeOfWhiteLines) / 2;
+
+                    for (var i = 0; i < noOfWhiteLines; i++) {
+                        var whiteLineGeometry = new THREE.CubeGeometry(1, 0.1, sizeOfWhiteLines);
+                        var whiteMaterial = new THREE.MeshLambertMaterial({color: 0XFFFFFF});
+                        var whiteLine = new THREE.Mesh(whiteLineGeometry, whiteMaterial);
+                        whiteLine.position.z = (sizeOfWhiteLines * 2) * i - height / 2 + sizeOfWhiteLines / 2;
+                        whiteLine.position.y = 0.05;
+                        roadGroup.add(whiteLine);
+
+                    }
+                    return roadGroup;
+                }
+
+                function getRandomBuilding() {
+                    var randomBuildingToPick = THREE.Math.randInt(0, 3);
+
+                    if (randomBuildingToPick === 0) {
+                        var tower = createSpecialTower();
+                        tower.group.position.x = (Math.random() - 0.5) * 90;
+                        tower.group.position.z = (Math.random() - 0.5) * 90;
+                        return tower;
+                    } else if (randomBuildingToPick === 1) {
+                        var dynamicTowerSettings = {
+                            settings:
+                                    [
+                                        {
+                                            range: [0, 10],
+                                            thickness: THREE.Math.randFloat(2, 3),
+                                            width: THREE.Math.randInt(5, 6),
+                                            height: THREE.Math.randInt(5, 6),
+                                            rotation: -0.04
+                                        },
+                                        {
+                                            range: [11, 15],
+                                            thickness: THREE.Math.randFloat(2, 4),
+                                            width: THREE.Math.randInt(8, 12),
+                                            height: THREE.Math.randInt(5, 12),
+                                            rotation: 0.05
+                                        },
+                                        {
+                                            range: [16, 25],
+                                            thickness: THREE.Math.randFloat(2, 5),
+                                            width: THREE.Math.randInt(8, 10),
+                                            height: THREE.Math.randInt(8, 10),
+                                            rotation: 0.05
+                                        },
+                                        {
+                                            range: [26, 50],
+                                            thickness: THREE.Math.randFloat(2, 4),
+                                            width: THREE.Math.randInt(6, 7),
+                                            height: THREE.Math.randInt(6, 7),
+                                            rotation: -0.04
+                                        }
+                                    ],
+                            firstColor: chroma.random(),
+                            secondColor: chroma.random(),
+                            chroma: function ()
+                            {
+
+                                var chromaScale = chroma.scale([this.firstColor, this.secondColor]);
+                                return chromaScale(Math.random()).hex();
+                            },
+                            height: THREE.Math.randInt(25, 50)
+                        };
+                        var rotatingTower = createDynamicRotatingTower(dynamicTowerSettings);
+                        rotatingTower.group.position.z = 20;
+                        rotatingTower.group.position.x = (Math.random() - 0.5) * 90;
+                        rotatingTower.group.position.z = (Math.random() - 0.5) * 90;
+                        return rotatingTower;
+                    } else if (randomBuildingToPick === 2) {
+                        var randomSize = THREE.Math.randInt(10, 18);
+                        return createSimpleHouse(randomSize, randomSize, randomSize);
+                    } else if (randomBuildingToPick === 3) {
+                        var randomSizeHeight = THREE.Math.randInt(20, 90);
+                        var skyscarper = createSkyscraper(10, randomSizeHeight);
+                        return skyscarper;
+                    }
+                }
+
+                function createDynamicRotatingTower(dynamicSettings) {
+                    var bookBuilding = new THREE.Object3D();
+                    var currentY = 0;
+                    for (var i = 0; i < dynamicSettings.height; i++) {
+                        //gets the range for this height
+                        var settingsForThisHeight = dynamicSettings.settings.filter(function (s) {
+                            return i >= s.range[0] && i <= s.range[1];
+                        })[0];
+
+                        var brickGeometry = new THREE.CubeGeometry(settingsForThisHeight.width, settingsForThisHeight.thickness, settingsForThisHeight.height);
+                        var brickMaterial = new THREE.MeshLambertMaterial({color: dynamicSettings.chroma()});
+
+                        var brick = new THREE.Mesh(brickGeometry, brickMaterial);
+
+                        currentY += settingsForThisHeight.thickness;
+
+                        brick.position.y += currentY;
+                        brick.rotation.y += Math.PI * settingsForThisHeight.rotation * i;
+
+                        bookBuilding.add(brick);
+                    }
+                    return {
+                        group: bookBuilding,
+                        width: 7,
+                        height: 7,
+
+                        render: function ()
+                        {
+                            bookBuilding.rotation.y += Math.PI + 0.05;
+                        }};
+                }
+
+                function createLightBulb() {
+                    //creates the pole for the street light
+                    var parent = new THREE.Object3D();
+                    var height = 20;
+                    var tubeGeometry = new THREE.CylinderGeometry(0.5, 0.5, height, 5, 5);
+                    var tubeMaterial = new THREE.MeshLambertMaterial({color: 0x787373});
+                    var lightBulbStick = new THREE.Mesh(tubeGeometry, tubeMaterial);
+                    parent.add(lightBulbStick);
+
+                    //creates base for the lamp
+                    var lightBulbBaseGeometry = new THREE.CylinderGeometry(0.5, 0.8, 0.8, 10, 10);
+                    var libhtBulbMaterial = new THREE.MeshLambertMaterial({color: 0x0a5266});
+                    var libhtBulbBase = new THREE.Mesh(lightBulbBaseGeometry, libhtBulbMaterial);
+                    libhtBulbBase.position.y = height / 2;
+                    libhtBulbBase.rotation.z = Math.PI;
+                    parent.add(libhtBulbBase);
+
+                    var lamp = new THREE.Object3D();
+
+                    var lightSpotlight = new THREE.SpotLight(0xfffb94, 1, 40);
+                    lightSpotlight.castShadows = true;
+                    lightSpotlight.position.set(0, (height / 2) + 2, 0);
+                    lightSpotlight.target.position = new THREE.Object3D(0, 0, 0);
+                    lamp.add(lightSpotlight);
+                    lamp.add(lightSpotlight.target);
+
+                    //creating the bottom part of the lamp
+                    var bottomPartOfLampGeometry = new THREE.CylinderGeometry(0.06, 0.5, 1, 10, 1);
+                    var lampMaterial = new THREE.MeshLambertMaterial({color: 0xedf511});
+                    var bottomPartOfLamp = new THREE.Mesh(bottomPartOfLampGeometry, lampMaterial);
+                    bottomPartOfLamp.position.y = height / 2 + 0.5;
+                    bottomPartOfLamp.rotation.z = Math.PI;
+                    lamp.add(bottomPartOfLamp);
+
+                    var spherePartOfLampGeometry = new THREE.SphereGeometry(0.5, 10, 10);
+
+                    //creating the upper part of the lamp
+                    var spherePartOfLamp = new THREE.Mesh(spherePartOfLampGeometry, lampMaterial);
+                    spherePartOfLamp.position.set(0, height / 2 + 0.5 + 0.5, 0);
+                    lamp.add(spherePartOfLamp);
+                    parent.add(lamp);
+
+                    return {group: parent,
+                        width: 10,
+                        height: height,
+                        render: function () {
+
+                        }
+                    };
+                }
+
+                function createSpecialTower() {
+                    var parent = new THREE.Object3D();
+                    var cubeGeometry = new THREE.CubeGeometry(10, 30, 10);
+                    var cubeMaterial = new THREE.MeshLambertMaterial({color: 0x07FFF8});
+                    var cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+                    cube.castShadow = true;
+                    cube.position.x = 0;
+                    cube.position.y = 15;
+                    parent.add(cube);
+
+                    //creating roof
+                    var coneGeometry = new THREE.CylinderGeometry(0, 7, 10, 4, 15);
+                    var cone = new THREE.Mesh(coneGeometry, cubeMaterial);
+                    cone.position.y = 34.99;
+                    cone.rotation.y = 40.05;
+                    cone.castShadow = true;
+                    parent.add(cone);
+
+                    var torusGeometry = new THREE.TorusGeometry(5, 0.5, 50, 50, Math.PI * 2);
+                    //creates rotating piece at the top of tower
+                    var artSculptureGroup = new THREE.Object3D();
+                    artSculptureGroup.name = "Art Sculpture";
+                    var floatingCircleMaterial = new THREE.MeshLambertMaterial({color: 0x07FFF8});
+                    var floatingCircle = new THREE.Mesh(torusGeometry, floatingCircleMaterial);
+                    floatingCircle.rotation.x = 0.6 * Math.PI;
+                    floatingCircle.castShadow = true;
+                    artSculptureGroup.add(floatingCircle);
+
+                    var secondCircleMaterial = new THREE.MeshLambertMaterial({color: 0x07FFF8});
+                    var secondCircle = new THREE.Mesh(torusGeometry, secondCircleMaterial);
+                    secondCircle.rotation.x = -0.7 * Math.PI;
+                    secondCircle.castShadow = true;
+                    artSculptureGroup.add(secondCircle);
+
+                    var thirdCircleMaterial = new THREE.MeshLambertMaterial({color: 0x07FFF8});
+                    var thirdCircle = new THREE.Mesh(torusGeometry, thirdCircleMaterial);
+                    thirdCircle.rotation.x = -1.2 * Math.PI;
+                    thirdCircle.castShadow = true;
+                    artSculptureGroup.add(thirdCircle);
+
+                    artSculptureGroup.position.y = 39.99;
+                    artSculptureGroup.position.x = 0;
+                    parent.add(artSculptureGroup);
+
+                    //creating windows
+                    for (var sideIndex = 0; sideIndex < 4/*sides*/; sideIndex++) {
+                        var rotateModifier = 1;
+                        if (sideIndex === 0 || sideIndex === 3) {
+                            rotateModifier = -1;
+                        }
+                        var horizontal = false;
+                        if (sideIndex === 0 || sideIndex === 1) {
+                            horizontal = true;
+                        }
+                        var rotate = false;
+                        if (sideIndex === 2 || sideIndex === 3) {
+                            rotate = true;
+                        }
+                        var windowMaterial = new THREE.MeshLambertMaterial({color: 0xffffff});
+                        var windowGeometry = new THREE.CubeGeometry(0.67, 5, 5);
+                        var window = new THREE.Mesh(windowGeometry, windowMaterial);
+                        window.position.y = 26;
+
+                        if (horizontal) {
+                            window.position.x = rotateModifier * 4.7;
+                        } else {
+                            window.position.z = rotateModifier * 4.7;
+                        }
+                        if (rotate) {
+                            window.rotation.y = 0.5 * Math.PI;
+                        }
+                        parent.add(window);
+
+                        var window1 = new THREE.Mesh(windowGeometry, windowMaterial);
+                        window1.position.y = 19;
+                        if (horizontal) {
+                            window1.position.x = rotateModifier * 4.7;
+                        } else {
+                            window1.position.z = rotateModifier * 4.7;
+                        }
+                        if (rotate) {
+                            window1.rotation.y = 0.5 * Math.PI;
+                        }
+                        parent.add(window1);
+                    }
+                    return {group: parent,
+                        width: 10,
+                        height: 10,
+                        render: function () {
+                            var artSculpture = parent.children.find(function (s) {
+                                return s.name.valueOf() === "Art Sculpture";
+                            });
+
+                            artSculpture.rotation.y += Math.cos(Math.PI) * 0.1;
+                            parent.position.y = 2 + 2 * Math.sin(clock.getElapsedTime());
+                        }
+                    };
+                }
+
+                function createSimpleHouse(x, z, y) {
+                    var parent = new THREE.Object3D();
+
+                    var cubeGeometry = new THREE.CubeGeometry(x, y, z);
+                    var cubeMaterial = new THREE.MeshLambertMaterial({color: 0xffec8b});
+                    var cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+                    cube.castShadow = true;
+                    cube.position.x = 0;
+                    cube.position.y = y / 2;
+                    parent.add(cube);
+
+                    //creating roof
+                    var coneGeometry = new THREE.CylinderGeometry(0, x, y / 3, 4, 4);
+                    var coneMaterial = new THREE.MeshLambertMaterial({color: 0x4A3D39});
+                    var cone = new THREE.Mesh(coneGeometry, coneMaterial);
+                    cone.position.y = (y / 3) / 2 + y;
+                    cone.rotation.y = 40.05;
+                    cone.castShadow = true;
+                    parent.add(cone);
+
+                    //creating windows
+                    for (var sideIndex = 0; sideIndex < 3/*sides*/; sideIndex++) {
+                        var rotateModifier = 1;
+                        if (sideIndex === 0) {
+                            rotateModifier = -1;
+                        }
+                        var horizontal = false;
+                        if (sideIndex === 0 || sideIndex === 1) {
+                            horizontal = true;
+                        }
+                        var rotate = false;
+                        if (sideIndex === 2) {
+                            rotate = true;
+                        }
+                        var windowMaterial = new THREE.MeshLambertMaterial({color: 0xffffff});
+                        var windowGeometry = new THREE.CubeGeometry(0.05, x / 3, x / 3);
+                        var window = new THREE.Mesh(windowGeometry, windowMaterial);
+
+                        var bar1Material = new THREE.MeshLambertMaterial({color: 0x000000});
+                        var barGeometry = new THREE.CubeGeometry(0.09, x / 3, 0.3);
+                        var bar = new THREE.Mesh(barGeometry, bar1Material);
+                        var bar1Geometry = new THREE.CubeGeometry(0.09, 0.3, x / 3);
+                        var bar1 = new THREE.Mesh(bar1Geometry, bar1Material);
+
+                        window.position.y = y - y / 2;
+                        bar1.position.y = y - y / 2;
+                        bar.position.y = y - y / 2;
+                        if (horizontal) {
+                            window.position.x = rotateModifier * x / 2;
+                            bar.position.x = rotateModifier * x / 2;
+                            bar1.position.x = rotateModifier * x / 2;
+                        } else {
+                            window.position.z = rotateModifier * z / 2;
+                            bar.position.z = rotateModifier * z / 2;
+                            bar1.position.z = rotateModifier * z / 2;
+                        }
+                        if (rotate) {
+                            window.rotation.y = 0.5 * Math.PI;
+                            bar.rotation.y = 0.5 * Math.PI;
+                            bar1.rotation.y = 0.5 * Math.PI;
+                        }
+                        parent.add(bar);
+                        parent.add(bar1);
+                        parent.add(window);
+                    }
+
+                    var doorMaterial = new THREE.MeshLambertMaterial({color: 0x000000});
+                    var doorHeight = x / 2;
+                    var doorGeometry = new THREE.CubeGeometry(0.05, doorHeight, x / 3);
+                    var door = new THREE.Mesh(doorGeometry, doorMaterial);
+                    door.position.y = doorHeight / 2;
+                    door.rotation.y = 0.5 * Math.PI;
+                    door.position.z = -z / 2;
+                    parent.add(door);
+
+                    return {group: parent,
+                        width: x,
+                        height: y,
+                        render: function () {
+                        }
+                    };
+                }
+
+                function createSkyscraper(width, height) {
+                    var parent = new THREE.Object3D();
+
+                    var cubeGeometry = new THREE.CubeGeometry(width, height, width);
+                    var cubeMaterial = new THREE.MeshLambertMaterial({color: 0x707070});
+                    var cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+                    cube.position.y = height / 2;
+                    parent.add(cube);
+
+                    var noOfStripes = height / 1;
+
+                    //creating floors in skycrapers
+                    for (var i = 0; i < noOfStripes / 2; i++) {
+                        var stripeGeometry = new THREE.CubeGeometry(width + 0.05, 1, width + 0.05);
+                        var stripeMaterial = new THREE.MeshLambertMaterial({color: 0xffffff});
+                        var stripe = new THREE.Mesh(stripeGeometry, stripeMaterial);
+                        stripe.position.y = i * 2;
+                        parent.add(stripe);
+                    }
+                    return {group: parent,
+                        width: width,
+                        height: height,
+                        render: function () {
+                        }
+                    };
+
+                }
+
+            });
+
+        </script>
+    </body>
+</html>
